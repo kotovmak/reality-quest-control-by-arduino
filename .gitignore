@@ -17,7 +17,7 @@ lint
 *.iws
 classes
 gen-external-apklibs
-out/production
+out
 
 #gradle
 .gradle

@@ -1,115 +1,115 @@
 #include <SPI.h>
 #include <Ethernet.h>
 
-
 byte mac[] = {
   0xDE, 0xAD, 0xBE, 0x88, 0xF6, 0xE5
 };
-// fill in an available IP address on your network here,
-// for manual configuration:
+
 IPAddress ip(192, 168, 0, 22);
 IPAddress gateway(192, 168, 0, 1);
-
 IPAddress subnet(255, 255, 0, 0);
-// fill in your Domain Name Server address here:
-IPAddress myDns(1, 1, 1, 1);
-// initialize the library instance:
+IPAddress myDns(8, 8, 8, 8);
+
 EthernetClient clients[4];
 EthernetServer server(12321);
 
-char ardsend[20];
-//char compsend[20];
-char inchar =-1;
-//int index = 0;
-
-
 /*-------------------VARS----------------------*/
-uint8_t result;
+
+// stored state. If state is changed it will be send to App
 String LastStrLan;
-#define S_SIZE 18
+
+// array of bool
+// signals from sensors and in game buttons
+#define S_SIZE 20
 boolean s[S_SIZE];
+// array of int
+// pins for sensors
+#define P_SIZE 20
+int p[P_SIZE] = { 5, 4, 3, 2 };
+
 boolean start, finish_win, finish_lose, reset = false;
-boolean sended_start, sended_finish,p08 = false;
+boolean sended_start, sended_finish = false;
 boolean reseted = true;
+
+// array or bool
+// number of steps (open door or open lock is a one step)
 #define ST_SIZE 15
 boolean step[ST_SIZE];
-#define UST_SIZE 6
+
+// array of bool
+// used when receive `E` from Java control app
+#define UST_SIZE 15
 boolean u_step[UST_SIZE];
 boolean u_end = false;
+
+// array of bool
+// used when we need play sound
 #define PL_SIZE 10
 boolean play[PL_SIZE];
+
+// pin for start and reset quest button
 int pin_reset = A0;
 int pin_power = A1;
-int pin_work = A2;
-int pin_error = A3;
-#define P_SIZE 18
-int p[P_SIZE] = {A8, A9, A10, A11, A12, A13, A14, A15, 40, 42, 44, 46, 38,39, A5, 5, 4, 3};
-#define R_SIZE 16
-int r[R_SIZE] = {22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37};
+
+// array of int
+// used for connect relays
+#define R_SIZE 32
+int r[R_SIZE] = {22, 23, 24, 25};
+
+// array of long
+// used for in game timers
 #define T_SIZE 18
-unsigned long timer[T_SIZE],rInt;
-int ii;
-boolean go;
+unsigned long timer[T_SIZE];
+
 /*------------------------------------------------*/
 
 void setup() {
+  //first serial for debug in IDE Serial port
   Serial.begin(9600);
+  //second serial connection for open Socket
   Serial1.begin(9600);
 
   Ethernet.begin(mac, ip, myDns, gateway, subnet);
+
+  //open Socket
   server.begin();
-  //Serial.println("ip serv: 192.168.0.5");
-  //Serial.println("port server:   12320");
+
   Serial.print("ip ard:   ");
   Serial.println(Ethernet.localIP());
   Serial.println("port ard:      12321");
 
+  //set sensor pins to INPUT mode
+  for (int i=0; i<P_SIZE;i++) {
+    pinMode(p[i], INPUT_PULLUP);
+  }
   pinMode(pin_power,INPUT_PULLUP);
   pinMode(pin_reset,INPUT_PULLUP);
 
-  for (int i=0; i<P_SIZE;i++) {
-    if (i>13) {
-    pinMode(p[i], INPUT);
-      digitalWrite(p[i], LOW);
-    } else {
-    pinMode(p[i], INPUT_PULLUP);
-    digitalWrite(p[i], HIGH);
-    }
-   }
+  //set start and reset pins to off state
   digitalWrite(pin_power, HIGH);
   digitalWrite(pin_reset, HIGH);
 
+  //set relay pins to OUTPUT mode
   for (int i=0; i<R_SIZE;i++) {
     pinMode(r[i], OUTPUT);
   }
-  pinMode(pin_error, OUTPUT);
-  pinMode(pin_work, OUTPUT);
 
   InitReset();
 
-  for (int i=0; i<P_SIZE;i++) {
-    //Serial.print(String("p"+String(i)+" "));
-    //Serial.println(digitalRead(p[i]));
-  }
   Serial.println("ready");
 }
 
 void InitReset()
 {
-  ii=0;
-  rInt = 0;
-  p08 = false;
-  go = false;
-
+  // all relays to close position
   for (int i=0; i<R_SIZE;i++) {
-    if (i==6)
-    digitalWrite(r[i], LOW);
-    else
     digitalWrite(r[i], HIGH);
   }
-
-  digitalWrite(pin_work, LOW);
-
+  //set all pins to off state
+  for (int i=0; i<P_SIZE;i++) {
+    digitalWrite(p[i], HIGH);
+  }
+  //set all sensors to off state
   for (int i=0; i<S_SIZE;i++) {
     s[i] = false;
   }
@@ -138,12 +138,15 @@ void InitReset()
 void loop() {
 
   EthernetClient client = server.available();
+
+  // check if pin state changed then change var
   if (ChangeStatePin(pin_power, !start))
     start =  !GetStatePin(pin_power, start);
 
   if (ChangeStatePin(pin_reset, !reset))
     reset = !GetStatePin(pin_reset, reset);
 
+  // incoming connections worker
   if (client) {
     boolean newClient = true;
     for (byte i = 0; i < 4; i++) {
@@ -193,38 +196,18 @@ void loop() {
     }
   }
 
-
+  // reset from App or from reset button
   if (reset && !reseted) {
     Serial1.println("R");
     InitReset();
   }
 
-  if (timer[0])
-  if (millis() - timer[0] > 500) {
-    digitalWrite(pin_work, !digitalRead(pin_work));
-    timer[0] = millis();
-  }
-
+  // check if pin state changed then change sensor var
   for (int i=0; i<P_SIZE;i++) {
-    if (i>13) {
-      if (ChangeStatePin(p[i], s[i])) {
-        if (!timer[6]) s[i] =  GetStatePin(p[i], s[i]);
-        if (i==16 || i==15) timer[6]=millis();
-         Serial.println(p[i]);
-        Serial.println(s[i]);
-        delay(50);
-
-
-      }
-    } else {
-      if (ChangeStatePin(p[i], !s[i])) {
-        s[i] =  !GetStatePin(p[i], s[i]);
-        Serial.println(p[i]);
-        Serial.println(s[i]);
-        delay(50);
-      }
+    if (ChangeStatePin(p[i], !s[i])) {
+      s[i] =  !GetStatePin(p[i], s[i]);
+      delay(50);
     }
-    if (timer[6]) if (millis() - timer[6] > 2000) timer[6]=false;
   }
 
   if (start && reseted) {
@@ -232,236 +215,51 @@ void loop() {
      u_end = false;
      sended_finish = false;
      step[0] = true;
-     //play[0] = true;
-     timer[0] = millis();
-     timer[3] = millis();
-     rInt = random(360000,720000);
+     // send S to App that means that we start quest and need start in App timer
      Serial1.println("S");
-     digitalWrite(r[4], LOW);
-     digitalWrite(r[7], LOW);
-    digitalWrite(r[2], LOW);
   }
 
- if (u_step[0] && digitalRead(r[9]) == LOW) {
-    digitalWrite(r[9], HIGH);
+ // u_step[0] - it's remote launch from App
+ // step[0] - means: work only after quest start
+ // !step[1] - means: work only one time
+ // s[0] - means: work after sensor s[0] is activated
+ if (u_step[0] || (s[0] && step[0] && !step[1]))
+  {
+    step[1] = true;
+    u_step[0] = false;
+    digitalWrite(r[0], LOW);
+    // first symbol must be P
+    goplay("P_some_sound.mp3");
+ }
+ if (u_step[0] && digitalRead(r[0]) == LOW) {
+    // disable relay by remote launch from App
+    digitalWrite(r[0], HIGH);
     u_step[0] = false;
   }
-  if (u_step[0] || (s[0] && step[0] && !step[1]))
-  {
-       step[1] = true;
-       u_step[0] = false;
-       goplay("P01.wma");
-       digitalWrite(r[9], LOW);
-  }
 
-  if (u_step[1] && digitalRead(r[10]) == LOW) {
-    digitalWrite(r[10], HIGH);
+ // u_step[1] - it's remote launch from App
+ // step[1] - means: work only after prev step
+ // !step[2] - means: work only one time
+ // s[1] - means: work after sensor s[1] is activated
+ if (u_step[1] || (s[1] && step[1] && !step[2]))
+  {
+    step[2] = true;
+    u_step[1] = false;
+    digitalWrite(r[1], LOW);
+    // first symbol must be P
+    goplay("P_some_sound.mp3");
+ }
+ if (u_step[1] && digitalRead(r[1]) == LOW) {
+    // disable relay by remote launch from App
+    digitalWrite(r[1], HIGH);
     u_step[1] = false;
   }
-  if (u_step[1] || (s[1] && step[1] && !step[2]))
-  {
-       step[2] = true;
-       u_step[1] = false;
-       timer[8] = millis();
-       goplay("P02.wma");
-  }
-  if (timer[8]) if (millis() - timer[8] > 500) {
-     digitalWrite(r[10], LOW);
-     digitalWrite(r[9], HIGH);
-      timer[8]=false;
-  }
 
-   if (u_step[2] && digitalRead(r[1]) == LOW) {
-    digitalWrite(r[1], HIGH);
-    u_step[2] = false;
-  }
-  if (u_step[2] || (s[2] && s[3] && !s[4] && !s[5] && !s[6] && step[2] && !step[3]))
-  {
-    digitalWrite(r[1], LOW);
-    //Serial.println("s3");
-    step[3] = true;
-    u_step[2] = false;
-    digitalWrite(r[11], HIGH);
-    digitalWrite(r[12], HIGH);
-    digitalWrite(r[13], HIGH);
-    digitalWrite(r[14], HIGH);
-    digitalWrite(r[15], LOW);
-  }
-  if (!step[3]) {
-    if (s[2]) digitalWrite(r[11], LOW); else digitalWrite(r[11], HIGH);
-    if (s[3]) digitalWrite(r[12], LOW); else digitalWrite(r[12], HIGH);
-    if (s[4]) digitalWrite(r[13], LOW); else digitalWrite(r[13], HIGH);
-    if (s[5]) digitalWrite(r[14], LOW); else digitalWrite(r[14], HIGH);
-    if (s[6]) digitalWrite(r[15], LOW); else digitalWrite(r[15], HIGH);
-  }
- if (u_step[3] && digitalRead(r[3]) == LOW) {
-    digitalWrite(r[3], HIGH);
-    u_step[3] = false;
-  }
-  if (u_step[3] || (s[8] && step[3] && !step[4]))
-  {
-    step[4] = true;
-    u_step[3] = false;
-    goplay("P10.wma");
-    digitalWrite(r[3], LOW);
-  }
-
-  if (u_step[4] && digitalRead(r[2]) == LOW) {
-    //digitalWrite(r[2], HIGH);
-    digitalWrite(r[6], LOW);
-    u_step[4] = false;
-  }
-  if (u_step[4] || (!s[9] && step[4] && !step[5]))
-  {
-    step[5] = true;
-    u_step[4] = false;
-    timer[1] = millis();
-    goplay("P05.wmv");
-
-    digitalWrite(r[7], HIGH); //room light off
-  }
-  if (timer[1])
-  if (millis() - timer[1] > 7500) { //7,5 second
-    digitalWrite(r[6], HIGH); //projector off
-    digitalWrite(r[7], LOW); //light on
-    timer[1] = 0;
-  }
-
-  if (u_step[5] && digitalRead(r[0]) == LOW) {
-    digitalWrite(r[0], HIGH);
-    digitalWrite(r[5], HIGH);
-    u_step[5] = false;
-  }
-  if (u_step[5] || (!s[10] && step[5] && !step[6]))
-  {
-    step[6] = true;
-    u_step[5] = false;
-    timer[4] = millis();
-    goplay("P06.wma");
-    digitalWrite(r[7], HIGH);
-    digitalWrite(r[5], LOW);
-    digitalWrite(r[0], LOW);
-  }
-  if (timer[4])
-  if (millis() - timer[4] > 12000) {
-    digitalWrite(r[5], HIGH);
-    digitalWrite(r[0], HIGH);
-    timer[5] = millis();
-    timer[4] = 0;
-  }
-  if (timer[5])
-  if (millis() - timer[5] > 3000) {
-     digitalWrite(r[7], LOW); // room light on
-    timer[5] = 0;
-  }
-
- if (s[7] && step[6] && !step[12])
-  {
-    step[12] = true;
-    goplay("P14.wma");
-    finish_win = true;
-    digitalWrite(r[8], LOW); // light on
-  }
-  if (!s[12] && step[3] && !step[7])
-  {
-    step[7] = true;
-    goplay("P07.wma");
-  }
-
-  if (!s[11] && step[2] && !step[11])
-  {
-    step[11] = true;
-    goplay("P15.wma");
-  }
-
-  // s[14] - XD-RF-5V radio buton 1
-
-  if (s[14] && !go){
-      if (!timer[9]) {
-        timer[9] = millis();
-        goplay("P08.wma");
-      }
-      s[14] = false;
-  }
-
-  if (timer[9]) if (millis() - timer[9] > 500) {
-    timer[9]=false;
-    go=true;
-  }
-
-  if ((s[14] || (ii%2!=0 && ii>0)) && digitalRead(r[4]) == HIGH) {
-      digitalWrite(r[4], LOW);
-      s[14] = false;
-      ii++;
-      timer[7] = millis();
-    }
-  if ((s[14]) && digitalRead(r[4]) == LOW) {
-    if (!p08) {
-      p08=true;
-    }
-     digitalWrite(r[4], HIGH);
-     s[14] = false;
-     ii++;
-  }
-  if (timer[7])
-  if (millis() - timer[7] > 2000) {
-    timer[7] = false;
-    ii=0;
-  }
-
-  // s[15] - XD-RF-5V radio buton 2
-  if ((s[15]) && !timer[2]) {
-    s[15] = false;
-    timer[2] = millis();
-    if (!step[7]) goplay("P09.wma");
-    if (step[7] && !step[5]) goplay("P10.wma");
-    if (step[5]) goplay("P13.wma");
-  }
-  if (timer[2])
-  if (millis() - timer[2] > 2000) {
-    timer[2] = 0;
-  }
-
-  // s[16]  - XD-RF-5V radio buton 3
-  // r[7] - room light channel 3
-  // r[8] - light on exit
-  if ((s[16]) && digitalRead(r[7]) == LOW) {
-    digitalWrite(r[7], HIGH);
-//    digitalWrite(r[8], HIGH);
-    digitalWrite(r[15], HIGH);
-    s[16] = false;
-  }
-  if ((s[16]) && digitalRead(r[7]) == HIGH) {
-    digitalWrite(r[7], LOW);
-    digitalWrite(r[15], LOW);
-    s[16] = false;
-  }
-
-  if (timer[3])
-  if (millis() - timer[3] > rInt) {
-    if (timer[1]) timer[3] = millis();
-    else {
-      goplay("P11.wmv");
-    digitalWrite(r[2], HIGH);
-      delay(100);
-    digitalWrite(r[2], LOW);
-      timer[3] = millis();
-      rInt = random(360000,720000);
-    }
-  }
-
-  // s[17] - XD-RF-5V radio buton 4
-  if (s[17])
-  {
-    Serial1.println("Q");
-    s[17] = false;
-  }
-
+ // u_end - it's remote launch from App
   if (u_end)
   {
     u_end = false;
-    s[17] = false;
-    goplay("P12.wma");
+    goplay("P_some_sound.mp3");
     finish_lose = true;
     Serial1.println("R");
   }
@@ -499,7 +297,7 @@ void GetLanVar(String StrVar) {
       if (StrVar[i] == 'E') u_step[i] = true;
                          else u_step[i] = false;
     }
-    if (StrVar[7] == 'E') {
+    if (StrVar[UST_SIZE] == 'E') {
            u_end = true;
     } else u_end = false;
 }
